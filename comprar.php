@@ -1,29 +1,37 @@
 <?php
 require __DIR__ . '/conexion.php';
 
+function volver($params) {
+    header('Location: ./?' . http_build_query($params));
+    exit;
+}
+
+$producto_id = (int)($_POST['producto_id'] ?? 0);
+$cantidad    = (int)($_POST['cantidad'] ?? 0);
+
+if ($producto_id <= 0 || $cantidad <= 0) {
+    volver(['error' => 'datos']);
+}
+
 try {
-    $producto_id = isset($_POST['producto_id']) ? (int)$_POST['producto_id'] : 0;
-    $cantidad = isset($_POST['cantidad']) ? (int)$_POST['cantidad'] : 0;
+    $pdo->beginTransaction();
 
-    if ($producto_id <= 0 || $cantidad <= 0) {
-        die("Datos invalidos.");
-    }
-
-    $stmt = $pdo->prepare("SELECT nombre, precio, stock FROM productos WHERE id = ?");
+    // Bloquea la fila para que dos compras al mismo tiempo no vendan de mas
+    $stmt = $pdo->prepare("SELECT nombre, precio, stock FROM productos WHERE id = ? FOR UPDATE");
     $stmt->execute([$producto_id]);
     $producto = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$producto) {
-        die("Producto no encontrado.");
+        $pdo->rollBack();
+        volver(['error' => 'producto']);
     }
 
-    if ($cantidad > $producto['stock']) {
-        die("No hay suficiente stock disponible.");
+    if ($cantidad > (int)$producto['stock']) {
+        $pdo->rollBack();
+        volver(['error' => 'stock']);
     }
 
     $total = $producto['precio'] * $cantidad;
-
-    $pdo->beginTransaction();
 
     $stmt = $pdo->prepare("INSERT INTO compras (producto_id, producto_nombre, cantidad, total) VALUES (?, ?, ?, ?)");
     $stmt->execute([$producto_id, $producto['nombre'], $cantidad, $total]);
@@ -32,13 +40,12 @@ try {
     $stmt->execute([$cantidad, $producto_id]);
 
     $pdo->commit();
-
-    header("Location: productos.php?compra=ok");
-    exit;
+    volver(['compra' => 'ok', 'id' => $producto_id, 'cantidad' => $cantidad]);
 
 } catch (PDOException $e) {
     if ($pdo->inTransaction()) {
         $pdo->rollBack();
     }
-    die("Error: " . $e->getMessage());
+    error_log($e->getMessage());
+    volver(['error' => 'servidor']);
 }
